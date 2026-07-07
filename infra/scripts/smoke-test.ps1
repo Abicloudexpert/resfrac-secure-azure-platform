@@ -80,7 +80,10 @@ if ($TenantId -and $ClientId -and $ClientSecret -and $ApiAudience) {
             grant_type    = 'client_credentials'
         }
         $auth = @{ Authorization = "Bearer $($tokenResp.access_token)" }
-        if (-not (Test-Endpoint -Name 'API /api/v1/items (authorized)' -Url "$ApiUrl/api/v1/items" -ExpectedStatus 200 -Headers $auth)) { $failures++ }
+        # Retried: the first authorized request warms the SQL pool + acquires the
+        # Managed Identity token, which can exceed the per-request timeout on a
+        # cold instance.
+        if (-not (Test-Endpoint -Name 'API /api/v1/items (authorized)' -Url "$ApiUrl/api/v1/items" -ExpectedStatus 200 -Headers $auth -Retry)) { $failures++ }
     }
     catch {
         Write-Err "Token acquisition failed: $($_.Exception.Message)"

@@ -35,8 +35,13 @@ function loadConfig(env = process.env) {
       jwksUri:
         env.AUTH_JWKS_URI ||
         (tenantId ? `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys` : ''),
-      // Audience is the App Registration (Application ID URI or client id).
-      audience: env.AUTH_AUDIENCE || (apiClientId ? `api://${apiClientId}` : ''),
+      // Audience is the App Registration. Entra issues the App ID URI
+      // (`api://<clientId>`) in v1 access tokens and the bare client id in v2
+      // tokens, so we accept BOTH forms to stay robust across token versions.
+      // AUTH_AUDIENCE (comma-separated) overrides the derived defaults.
+      audience: env.AUTH_AUDIENCE
+        ? env.AUTH_AUDIENCE.split(',').map((s) => s.trim()).filter(Boolean)
+        : (apiClientId ? [`api://${apiClientId}`, apiClientId] : []),
       // Scope (delegated) or app role (application) required for protected routes.
       requiredScope: env.AUTH_REQUIRED_SCOPE || 'Data.Read',
     },
@@ -85,7 +90,9 @@ function assertProductionConfig(config) {
   if (config.auth.enabled) {
     if (!config.auth.issuer) problems.push('AUTH_ISSUER / AZURE_TENANT_ID is required');
     if (!config.auth.jwksUri) problems.push('AUTH_JWKS_URI / AZURE_TENANT_ID is required');
-    if (!config.auth.audience) problems.push('AUTH_AUDIENCE / API_CLIENT_ID is required');
+    if (!config.auth.audience || config.auth.audience.length === 0) {
+      problems.push('AUTH_AUDIENCE / API_CLIENT_ID is required');
+    }
   }
   if (config.sql.enabled && (!config.sql.server || !config.sql.database)) {
     problems.push('SQL_SERVER and SQL_DATABASE are required when SQL is enabled');

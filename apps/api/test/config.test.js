@@ -10,7 +10,8 @@ describe('config', () => {
     });
     expect(c.auth.issuer).toBe('https://login.microsoftonline.com/tid/v2.0');
     expect(c.auth.jwksUri).toBe('https://login.microsoftonline.com/tid/discovery/v2.0/keys');
-    expect(c.auth.audience).toBe('api://cid');
+    // Accepts both the v1 (App ID URI) and v2 (bare client id) audience forms.
+    expect(c.auth.audience).toEqual(['api://cid', 'cid']);
   });
 
   test('does not throw for incomplete non-production config', () => {
