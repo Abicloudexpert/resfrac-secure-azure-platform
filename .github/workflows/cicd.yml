@@ -197,10 +197,16 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
-            # --track-status false: return once OneDeploy accepts the package
-            # rather than blocking on the (slow) first cold-container start. The
-            # smoke-test stage verifies the app is actually serving, with retries.
-            az webapp deploy -g "$RG" -n "$API_NAME" --src-path api.zip --type zip --track-status false
+            # The infra step may have just changed app settings, which restarts
+            # the app and briefly makes the Kudu/SCM endpoint return 502. Retry a
+            # few times. --track-status false returns once OneDeploy accepts the
+            # package instead of blocking on the slow first cold-container start;
+            # the smoke-test stage verifies the app is actually serving.
+            n=0
+            until az webapp deploy -g "$RG" -n "$API_NAME" --src-path api.zip --type zip --track-status false; do
+              n=$((n+1)); [ "$n" -ge 6 ] && { echo "API deploy failed after $n attempts"; exit 1; }
+              echo "API deploy attempt $n failed (SCM likely restarting); retrying in 30s..."; sleep 30
+            done
 
       - name: Deploy — Function (zip, run-from-package)
         uses: azure/cli@v2
@@ -209,7 +215,11 @@ jobs:
             set -euo pipefail
             az functionapp config appsettings set -g "$RG" -n "$FUNC_NAME" \
               --settings WEBSITE_RUN_FROM_PACKAGE=1 >/dev/null
-            az functionapp deployment source config-zip -g "$RG" -n "$FUNC_NAME" --src function.zip
+            n=0
+            until az functionapp deployment source config-zip -g "$RG" -n "$FUNC_NAME" --src function.zip; do
+              n=$((n+1)); [ "$n" -ge 6 ] && { echo "Function deploy failed after $n attempts"; exit 1; }
+              echo "Function deploy attempt $n failed (SCM likely restarting); retrying in 30s..."; sleep 30
+            done
 
       - name: Smoke tests (health, readiness, authz)
         shell: pwsh

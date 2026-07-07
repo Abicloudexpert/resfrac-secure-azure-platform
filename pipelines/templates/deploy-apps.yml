@@ -32,9 +32,16 @@ steps:
       scriptLocation: inlineScript
       inlineScript: |
         set -euo pipefail
-        az webapp deploy -g "${{ parameters.resourceGroup }}" -n "$(apiName)" \
-          --src-path "$(Pipeline.Workspace)/${{ parameters.apiArtifact }}/${{ parameters.apiArtifact }}.zip" \
-          --type zip --track-status false
+        # Retry: a preceding app-settings change can restart the app and make the
+        # Kudu/SCM endpoint briefly return 502. --track-status false avoids
+        # blocking on the slow first cold-container start (smoke tests verify).
+        n=0
+        until az webapp deploy -g "${{ parameters.resourceGroup }}" -n "$(apiName)" \
+              --src-path "$(Pipeline.Workspace)/${{ parameters.apiArtifact }}/${{ parameters.apiArtifact }}.zip" \
+              --type zip --track-status false; do
+          n=$((n+1)); [ "$n" -ge 6 ] && { echo "API deploy failed after $n attempts"; exit 1; }
+          echo "API deploy attempt $n failed (SCM likely restarting); retrying in 30s..."; sleep 30
+        done
 
   - task: AzureCLI@2
     displayName: 'Deploy Function (zip)'
@@ -46,5 +53,9 @@ steps:
         set -euo pipefail
         az functionapp config appsettings set -g "${{ parameters.resourceGroup }}" -n "$(functionName)" \
           --settings WEBSITE_RUN_FROM_PACKAGE=1 >/dev/null
-        az functionapp deployment source config-zip -g "${{ parameters.resourceGroup }}" -n "$(functionName)" \
-          --src "$(Pipeline.Workspace)/${{ parameters.functionArtifact }}/${{ parameters.functionArtifact }}.zip"
+        n=0
+        until az functionapp deployment source config-zip -g "${{ parameters.resourceGroup }}" -n "$(functionName)" \
+              --src "$(Pipeline.Workspace)/${{ parameters.functionArtifact }}/${{ parameters.functionArtifact }}.zip"; do
+          n=$((n+1)); [ "$n" -ge 6 ] && { echo "Function deploy failed after $n attempts"; exit 1; }
+          echo "Function deploy attempt $n failed (SCM likely restarting); retrying in 30s..."; sleep 30
+        done
