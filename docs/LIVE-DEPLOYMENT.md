@@ -47,6 +47,30 @@ Public endpoints:
 - **Azure SQL admin** is the Entra group `sg-resfrac-sql-admins` (Entra-only
   authentication; SQL auth disabled).
 
+## One-time bootstrap: SQL server → Directory Readers
+
+Creating a contained DB user for a managed identity with
+`CREATE USER ... FROM EXTERNAL PROVIDER` requires the **SQL logical server's
+identity** to resolve the identity in Microsoft Entra, which needs the
+**Directory Readers** role. This is granted once by an administrator (it is
+deliberately *not* given to the CI principal — a deployment identity should not
+be able to modify directory roles):
+
+```bash
+SQLMI=$(az sql server show -n <sql-server> -g <rg> --query identity.principalId -o tsv)
+ROLE=$(az rest --method get \
+  --url "https://graph.microsoft.com/v1.0/directoryRoles?\$filter=roleTemplateId eq '88d8e3e3-8f55-4a1e-953a-9b9898b8876b'" \
+  --query "value[0].id" -o tsv)   # activate first if empty
+az rest --method post \
+  --url "https://graph.microsoft.com/v1.0/directoryRoles/$ROLE/members/\$ref" \
+  --headers "Content-Type=application/json" \
+  --body "{\"@odata.id\":\"https://graph.microsoft.com/v1.0/directoryObjects/$SQLMI\"}"
+```
+
+The alternative (no directory role) is to create the user with an explicit SID
+derived from the identity's **application/client id** — an MI's SQL SID is its
+client id, *not* its object id: `CREATE USER [name] WITH SID = <0x…>, TYPE = E`.
+
 ## Verification (smoke tests, all green)
 
 Run:

@@ -46,6 +46,12 @@ param sqlDnsZoneId string = ''
 @description('When not private, allow other Azure services (e.g. pipeline agents) to connect.')
 param allowAzureServices bool = true
 
+// The server's system-assigned identity is granted the "Directory Readers"
+// Entra role out-of-band (one-time admin bootstrap, see docs/LIVE-DEPLOYMENT.md).
+// That lets `CREATE USER ... FROM EXTERNAL PROVIDER` resolve the app/Function
+// managed identities in Entra when their contained DB users are created. The
+// role is intentionally not granted by CI (a deployment identity should not be
+// able to modify directory roles).
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   name: serverName
   location: location

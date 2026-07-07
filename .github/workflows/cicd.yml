@@ -158,7 +158,6 @@ jobs:
               echo "KV_NAME=$(get_out keyVaultName)"
               echo "SQL_FQDN=$(get_out sqlServerFqdn)"
               echo "SQL_DB=$(get_out sqlDatabaseName)"
-              echo "API_PRINCIPAL_ID=$(get_out apiPrincipalId)"
             } >> "$GITHUB_ENV"
 
       - name: Infra — seed Key Vault secret
@@ -186,7 +185,7 @@ jobs:
               --start-ip-address "$MYIP" --end-ip-address "$MYIP" -o none
             pushd infra/sql
             npm install --no-save --silent mssql @azure/identity
-            sed "s/{{API_APP_NAME}}/$API_NAME/g; s/{{FUNCTION_APP_NAME}}/$FUNC_NAME/g; s/{{API_MI_OBJECT_ID}}/$API_PRINCIPAL_ID/g" \
+            sed "s/{{API_APP_NAME}}/$API_NAME/g; s/{{FUNCTION_APP_NAME}}/$FUNC_NAME/g" \
               grant-managed-identities.sql.tmpl > /tmp/grant.sql
             node run-sql.cjs --server "$SQL_FQDN" --database "$SQL_DB" --file schema.sql
             node run-sql.cjs --server "$SQL_FQDN" --database "$SQL_DB" --file /tmp/grant.sql
