@@ -6,11 +6,13 @@
 -- with the actual App Service / Function App names, and {{API_MI_OBJECT_ID}}
 -- with the API managed identity's object (principal) id.
 --
--- `WITH OBJECT_ID` is used deliberately: it lets Azure SQL create the contained
--- user WITHOUT resolving the identity through Microsoft Graph, so the SQL
--- server's identity does NOT need the "Directory Readers" Entra role. This makes
--- the migration self-contained and reliable from CI (where the connected admin
--- is a service principal without directory-read permissions).
+-- The user is created WITH SID (+ TYPE = E) rather than FROM EXTERNAL PROVIDER.
+-- The SID is derived from the identity's Entra object id, so Azure SQL never has
+-- to resolve the identity through Microsoft Graph. This means the SQL server's
+-- identity does NOT need the "Directory Readers" Entra role, and the migration
+-- runs reliably from CI where the connected admin is a service principal without
+-- directory-read permissions. The token an MI presents carries this same object
+-- id, so it maps to this user automatically.
 --
 -- Run as an Entra admin connected to the TARGET database (not master).
 -- Idempotent: guarded with existence checks.
@@ -19,7 +21,13 @@
 -- ---- API identity: read + write on application tables ----
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{{API_APP_NAME}}')
 BEGIN
-    CREATE USER [{{API_APP_NAME}}] FROM EXTERNAL PROVIDER WITH OBJECT_ID = '{{API_MI_OBJECT_ID}}';
+    -- uniqueidentifier -> varbinary yields the same mixed-endian byte order Azure
+    -- uses for the principal SID; CONVERT(..., 1) formats it as a 0x... literal.
+    DECLARE @sid NVARCHAR(100) =
+        CONVERT(NVARCHAR(100), CONVERT(VARBINARY(16), CAST('{{API_MI_OBJECT_ID}}' AS UNIQUEIDENTIFIER)), 1);
+    DECLARE @sql NVARCHAR(MAX) =
+        N'CREATE USER [{{API_APP_NAME}}] WITH SID = ' + @sid + N', TYPE = E;';
+    EXEC sys.sp_executesql @sql;
 END;
 GO
 ALTER ROLE db_datareader ADD MEMBER [{{API_APP_NAME}}];
