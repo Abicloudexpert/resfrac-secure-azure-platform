@@ -1,0 +1,27 @@
+%% OAuth2 / Entra ID authentication + passwordless data access
+sequenceDiagram
+    autonumber
+    participant C as Client / Service
+    participant E as Microsoft Entra ID
+    participant A as Node.js API (App Service)
+    participant J as JWKS (Entra keys)
+    participant K as Key Vault
+    participant S as Azure SQL
+
+    C->>E: Request token (auth code or client_credentials)
+    E-->>C: Access token (JWT, aud=api://clientId)
+    C->>A: GET /api/v1/items (Authorization Bearer JWT)
+    A->>J: Fetch signing keys by kid (cached)
+    J-->>A: Public key
+    A->>A: Verify signature, iss, aud, exp and check scp or roles
+    alt token invalid
+        A-->>C: 401 Unauthorized
+    else missing scope
+        A-->>C: 403 Forbidden
+    else authorized
+        A->>K: Get secret (Managed Identity token)
+        K-->>A: Secret value
+        A->>S: Query (Managed Identity AAD access token)
+        S-->>A: Rows
+        A-->>C: 200 OK { featureFlag, items }
+    end

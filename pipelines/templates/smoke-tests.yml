@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Runs post-deployment smoke tests using the shared PowerShell script. Fails
+# the stage (and blocks promotion) if any check fails.
+# ---------------------------------------------------------------------------
+parameters:
+  - name: azureSubscription
+    type: string
+  - name: apiAudience
+    type: string
+    default: ''
+  # Optional client-credentials check (values from secret variables).
+  - name: tenantId
+    type: string
+    default: ''
+  - name: smokeClientId
+    type: string
+    default: ''
+  - name: smokeClientSecret
+    type: string
+    default: ''
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Smoke tests (health, readiness, authz)'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: pscore
+      scriptLocation: scriptPath
+      scriptPath: infra/scripts/smoke-test.ps1
+      arguments: >
+        -ApiUrl "$(apiUrl)"
+        -FunctionUrl "$(functionUrl)"
+        -TenantId "${{ parameters.tenantId }}"
+        -ClientId "${{ parameters.smokeClientId }}"
+        -ApiAudience "${{ parameters.apiAudience }}"
+    # Secret is mapped via env (supported pattern) rather than the command line.
+    env:
+      SMOKE_CLIENT_SECRET: ${{ parameters.smokeClientSecret }}

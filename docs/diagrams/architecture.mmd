@@ -1,0 +1,53 @@
+%% ResFrac — Target Azure Architecture
+flowchart LR
+    client["Client / Service<br/>(OAuth2 client)"]
+    entra["Microsoft Entra ID<br/>(OIDC / token issuer)"]
+
+    subgraph RG["Resource Group (per environment)"]
+        direction TB
+
+        subgraph VNET["VNet (private mode)"]
+            direction TB
+            subgraph SNAPP["snet-app (delegated)"]
+                api["App Service — Node.js API<br/>System-assigned MI"]
+                func["Function App — Python<br/>System-assigned MI"]
+            end
+            subgraph SNPE["snet-pe (private endpoints)"]
+                peKv["PE: Key Vault"]
+                peSql["PE: Azure SQL"]
+                peBlob["PE: Blob Storage"]
+            end
+        end
+
+        kv["Key Vault<br/>(RBAC, secrets)"]
+        sql[("Azure SQL DB<br/>Entra-only auth")]
+        stg[("Storage Account<br/>shared-key disabled")]
+
+        subgraph OBS["Observability"]
+            appi["Application Insights"]
+            law["Log Analytics Workspace"]
+            ag["Action Group (email)"]
+        end
+    end
+
+    client -->|1. get token| entra
+    client -->|2. Bearer token| api
+    api -->|validate JWT via JWKS| entra
+    api -->|MI: get secret| kv
+    api -->|MI: AAD token| sql
+    func -->|timer: write blob| stg
+    func -->|MI| stg
+
+    peKv -. private DNS .-> kv
+    peSql -. private DNS .-> sql
+    peBlob -. private DNS .-> stg
+
+    api -->|telemetry| appi
+    func -->|telemetry| appi
+    appi --> law
+    api -. diagnostics .-> law
+    func -. diagnostics .-> law
+    kv -. diagnostics .-> law
+    sql -. diagnostics .-> law
+    stg -. diagnostics .-> law
+    appi -->|alerts fire| ag

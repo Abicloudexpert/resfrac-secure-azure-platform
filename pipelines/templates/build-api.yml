@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# Build, lint, test and package the Node.js API. Publishes:
+#   * test results (JUnit) + code coverage (Cobertura)
+#   * api.zip build artifact (production dependencies only)
+# ---------------------------------------------------------------------------
+parameters:
+  - name: workingDir
+    type: string
+    default: apps/api
+  - name: artifactName
+    type: string
+    default: api
+
+steps:
+  - task: NodeTool@0
+    displayName: 'Use Node.js 22'
+    inputs:
+      versionSpec: '22.x'
+
+  - script: npm ci
+    displayName: 'API: install dependencies'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - script: npm run lint
+    displayName: 'API: lint (eslint)'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - script: npm run test:ci -- --reporters=default --reporters=jest-junit
+    displayName: 'API: unit tests + coverage'
+    workingDirectory: ${{ parameters.workingDir }}
+    env:
+      JEST_JUNIT_OUTPUT_DIR: $(Common.TestResultsDirectory)
+      JEST_JUNIT_OUTPUT_NAME: api-junit.xml
+
+  - task: PublishTestResults@2
+    displayName: 'API: publish test results'
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '$(Common.TestResultsDirectory)/api-junit.xml'
+      testRunTitle: 'API unit tests'
+
+  - task: PublishCodeCoverageResults@2
+    displayName: 'API: publish coverage'
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: '${{ parameters.workingDir }}/coverage/cobertura-coverage.xml'
+
+  # Package production runtime only (no devDependencies) for WEBSITE_RUN_FROM_PACKAGE.
+  - script: npm ci --omit=dev
+    displayName: 'API: install production dependencies'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - task: ArchiveFiles@2
+    displayName: 'API: create api.zip'
+    inputs:
+      rootFolderOrFile: ${{ parameters.workingDir }}
+      includeRootFolder: false
+      archiveType: zip
+      archiveFile: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}.zip'
+      replaceExistingArchive: true
+
+  - publish: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}.zip'
+    displayName: 'API: publish artifact'
+    artifact: ${{ parameters.artifactName }}

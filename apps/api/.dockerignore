@@ -1,0 +1,11 @@
+node_modules
+coverage
+.nyc_output
+test
+.env
+.env.*
+!.env.example
+*.md
+.eslintcache
+Dockerfile
+.dockerignore

@@ -1,0 +1,130 @@
+# ---------------------------------------------------------------------------
+# Deploys the Bicep infrastructure for one environment and configures the
+# out-of-band bits (Key Vault secret, SQL schema + MI grants).
+#
+# Authentication is via a Workload Identity Federation (OIDC) service
+# connection — there are NO stored cloud credentials. Application secrets are
+# passed in as secret pipeline variables (from a Key Vault-backed variable group).
+#
+# Outputs (set as job variables for later steps in the SAME deployment job):
+#   apiName, functionName, apiUrl, functionUrl, keyVaultName, sqlFqdn, sqlDb
+# ---------------------------------------------------------------------------
+parameters:
+  - name: azureSubscription      # service connection (WIF)
+    type: string
+  - name: environmentName
+    type: string
+  - name: location
+    type: string
+    default: eastus2
+  - name: workload
+    type: string
+    default: resfrac
+  - name: resourceGroup
+    type: string
+  - name: apiClientId
+    type: string
+  - name: sqlAdminObjectId
+    type: string
+  - name: sqlAdminLogin
+    type: string
+  - name: sqlAdminPrincipalType
+    type: string
+    default: Group
+  - name: alertEmail
+    type: string
+    default: ''
+  - name: demoSecretName
+    type: string
+    default: 'api-feature-flag'
+  - name: demoSecretValue
+    type: string
+    default: 'enabled'
+  - name: runSqlMigration
+    type: boolean
+    default: true
+
+steps:
+  - checkout: self
+
+  - task: AzureCLI@2
+    displayName: 'Infra: what-if (preview changes)'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        az group create -n "${{ parameters.resourceGroup }}" -l "${{ parameters.location }}" \
+          --tags workload=${{ parameters.workload }} environment=${{ parameters.environmentName }} >/dev/null
+        az deployment group what-if \
+          -g "${{ parameters.resourceGroup }}" \
+          -f infra/bicep/main.bicep \
+          -p infra/bicep/params/${{ parameters.environmentName }}.bicepparam \
+          -p location=${{ parameters.location }} \
+          -p apiClientId=${{ parameters.apiClientId }} \
+          -p sqlAdminObjectId=${{ parameters.sqlAdminObjectId }} \
+          -p sqlAdminLogin='${{ parameters.sqlAdminLogin }}' \
+          -p sqlAdminPrincipalType=${{ parameters.sqlAdminPrincipalType }} \
+          -p alertEmail='${{ parameters.alertEmail }}' || true
+
+  - task: AzureCLI@2
+    displayName: 'Infra: deploy Bicep stack'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        DEP_NAME="resfrac-${{ parameters.environmentName }}-$(Build.BuildId)"
+        az deployment group create \
+          -g "${{ parameters.resourceGroup }}" \
+          -n "$DEP_NAME" \
+          -f infra/bicep/main.bicep \
+          -p infra/bicep/params/${{ parameters.environmentName }}.bicepparam \
+          -p location=${{ parameters.location }} \
+          -p apiClientId=${{ parameters.apiClientId }} \
+          -p sqlAdminObjectId=${{ parameters.sqlAdminObjectId }} \
+          -p sqlAdminLogin='${{ parameters.sqlAdminLogin }}' \
+          -p sqlAdminPrincipalType=${{ parameters.sqlAdminPrincipalType }} \
+          -p alertEmail='${{ parameters.alertEmail }}'
+
+        get_out () { az deployment group show -g "${{ parameters.resourceGroup }}" -n "$DEP_NAME" --query "properties.outputs.$1.value" -o tsv; }
+        echo "##vso[task.setvariable variable=apiName]$(get_out apiName)"
+        echo "##vso[task.setvariable variable=functionName]$(get_out functionAppName)"
+        echo "##vso[task.setvariable variable=apiUrl]$(get_out apiUrl)"
+        echo "##vso[task.setvariable variable=functionUrl]$(get_out functionUrl)"
+        echo "##vso[task.setvariable variable=keyVaultName]$(get_out keyVaultName)"
+        echo "##vso[task.setvariable variable=sqlFqdn]$(get_out sqlServerFqdn)"
+        echo "##vso[task.setvariable variable=sqlDb]$(get_out sqlDatabaseName)"
+
+  - task: AzureCLI@2
+    displayName: 'Infra: seed Key Vault secret (out-of-band)'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        az keyvault secret set --vault-name "$(keyVaultName)" \
+          --name "${{ parameters.demoSecretName }}" --value "${{ parameters.demoSecretValue }}" >/dev/null
+        echo "Secret '${{ parameters.demoSecretName }}' set in $(keyVaultName)"
+
+  - ${{ if eq(parameters.runSqlMigration, true) }}:
+      - task: AzureCLI@2
+        displayName: 'Infra: apply SQL schema + MI grants (passwordless)'
+        inputs:
+          azureSubscription: ${{ parameters.azureSubscription }}
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            set -euo pipefail
+            # Self-contained, passwordless migration using the WIF identity
+            # (which must be a SQL Entra admin / member of the admin group).
+            pushd infra/sql
+            npm install --no-save --silent mssql @azure/identity
+            sed "s/{{API_APP_NAME}}/$(apiName)/g; s/{{FUNCTION_APP_NAME}}/$(functionName)/g" \
+              grant-managed-identities.sql.tmpl > /tmp/grant.sql
+            node run-sql.cjs --server "$(sqlFqdn)" --database "$(sqlDb)" --file schema.sql
+            node run-sql.cjs --server "$(sqlFqdn)" --database "$(sqlDb)" --file /tmp/grant.sql
+            popd

@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+    "STORAGE_ACCOUNT_URL": "https://stresfracdev.blob.core.windows.net",
+    "HEARTBEAT_CONTAINER": "heartbeats",
+    "ENVIRONMENT": "development",
+    "SERVICE_NAME": "resfrac-func"
+  }
+}

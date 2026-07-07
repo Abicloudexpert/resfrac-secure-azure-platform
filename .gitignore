@@ -1,0 +1,61 @@
+# ---- Secrets / local config (NEVER commit) ----
+*.env
+.env
+.env.*
+!.env.example
+local.settings.json
+*.pfx
+*.pem
+*.key
+*.publishsettings
+azureauth.json
+.azure/
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+coverage/
+.nyc_output/
+dist/
+*.tsbuildinfo
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# ---- Azure Functions ----
+bin/
+obj/
+.python_packages/
+func_env/
+
+# ---- Build artifacts ----
+*.zip
+*.tar.gz
+artifacts/
+.build/
+
+# ---- IaC ----
+*.plan
+.bicep/
+main.json
+
+# ---- Proprietary / provided material (keep out of a public repo) ----
+*.pdf
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp

@@ -1,0 +1,133 @@
+# ===========================================================================
+# ResFrac — CI/CD (Azure DevOps, multi-stage)
+#
+#   Build  ->  Deploy Dev  ->  Deploy Prod (manual approval)
+#
+# Highlights:
+#   * Multi-stage, environment-based deployments (Azure DevOps Environments).
+#   * Secret-less cloud auth via Workload Identity Federation (OIDC) service
+#     connection. Application secrets come from a Key Vault-backed variable
+#     group and are passed as secret variables (never printed).
+#   * Reusable step templates; the same Bicep + PowerShell used locally run here.
+#   * Prod stage gated by an Environment approval (configured in the ADO UI)
+#     and only runs from `main`.
+#
+# Prerequisites (one-time, documented in README):
+#   * Service connection (WIF) referenced by $(azureServiceConnection).
+#   * Variable groups: resfrac-common, resfrac-dev, resfrac-prod.
+#   * Environments: resfrac-dev, resfrac-prod (with approvals/checks on prod).
+# ===========================================================================
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - apps/**
+      - infra/**
+      - pipelines/**
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: resfrac-common   # azureServiceConnection, tenantId, workload, location
+  - name: workload
+    value: resfrac
+
+stages:
+  # -------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      - job: BuildApi
+        displayName: 'Build API (Node.js)'
+        steps:
+          - template: templates/build-api.yml
+      - job: BuildFunction
+        displayName: 'Build Function (Python)'
+        steps:
+          - template: templates/build-function.yml
+
+  # -------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy: Dev'
+    dependsOn: Build
+    condition: succeeded()
+    variables:
+      - group: resfrac-dev    # apiClientId, sqlAdminObjectId, sqlAdminLogin, alertEmail, resourceGroup, apiAudience, smokeClientId, smokeClientSecret
+    jobs:
+      - deployment: DeployDev
+        displayName: 'Provision + deploy + smoke (dev)'
+        environment: resfrac-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: templates/deploy-infra.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    environmentName: dev
+                    location: $(location)
+                    workload: $(workload)
+                    resourceGroup: $(resourceGroup)
+                    apiClientId: $(apiClientId)
+                    sqlAdminObjectId: $(sqlAdminObjectId)
+                    sqlAdminLogin: $(sqlAdminLogin)
+                    alertEmail: $(alertEmail)
+                    runSqlMigration: true
+                - template: templates/deploy-apps.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    resourceGroup: $(resourceGroup)
+                - template: templates/smoke-tests.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    tenantId: $(tenantId)
+                    apiAudience: $(apiAudience)
+                    smokeClientId: $(smokeClientId)
+                    smokeClientSecret: $(smokeClientSecret)
+
+  # -------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: 'Deploy: Prod'
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - group: resfrac-prod
+    jobs:
+      - deployment: DeployProd
+        displayName: 'Provision + deploy + smoke (prod)'
+        environment: resfrac-prod   # approvals/checks configured on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: templates/deploy-infra.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    environmentName: prod
+                    location: $(location)
+                    workload: $(workload)
+                    resourceGroup: $(resourceGroup)
+                    apiClientId: $(apiClientId)
+                    sqlAdminObjectId: $(sqlAdminObjectId)
+                    sqlAdminLogin: $(sqlAdminLogin)
+                    alertEmail: $(alertEmail)
+                    runSqlMigration: true
+                - template: templates/deploy-apps.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    resourceGroup: $(resourceGroup)
+                - template: templates/smoke-tests.yml
+                  parameters:
+                    azureSubscription: $(azureServiceConnection)
+                    tenantId: $(tenantId)
+                    apiAudience: $(apiAudience)
+                    smokeClientId: $(smokeClientId)
+                    smokeClientSecret: $(smokeClientSecret)

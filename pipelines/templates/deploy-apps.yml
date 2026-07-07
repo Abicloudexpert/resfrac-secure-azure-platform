@@ -1,0 +1,50 @@
+# ---------------------------------------------------------------------------
+# Deploys the pre-built api.zip and function.zip artifacts to the App Service
+# and Function App provisioned by deploy-infra.yml (same deployment job, so the
+# apiName/functionName job variables are already set).
+# ---------------------------------------------------------------------------
+parameters:
+  - name: azureSubscription
+    type: string
+  - name: resourceGroup
+    type: string
+  - name: apiArtifact
+    type: string
+    default: api
+  - name: functionArtifact
+    type: string
+    default: function
+
+steps:
+  - download: current
+    artifact: ${{ parameters.apiArtifact }}
+    displayName: 'Download API artifact'
+
+  - download: current
+    artifact: ${{ parameters.functionArtifact }}
+    displayName: 'Download Function artifact'
+
+  - task: AzureCLI@2
+    displayName: 'Deploy API (zip)'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        az webapp deploy -g "${{ parameters.resourceGroup }}" -n "$(apiName)" \
+          --src-path "$(Pipeline.Workspace)/${{ parameters.apiArtifact }}/${{ parameters.apiArtifact }}.zip" \
+          --type zip
+
+  - task: AzureCLI@2
+    displayName: 'Deploy Function (zip)'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        az functionapp config appsettings set -g "${{ parameters.resourceGroup }}" -n "$(functionName)" \
+          --settings WEBSITE_RUN_FROM_PACKAGE=1 >/dev/null
+        az functionapp deployment source config-zip -g "${{ parameters.resourceGroup }}" -n "$(functionName)" \
+          --src "$(Pipeline.Workspace)/${{ parameters.functionArtifact }}/${{ parameters.functionArtifact }}.zip"

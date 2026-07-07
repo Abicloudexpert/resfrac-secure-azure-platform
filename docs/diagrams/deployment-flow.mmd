@@ -1,0 +1,40 @@
+%% CI/CD deployment flow (Azure DevOps multi-stage)
+flowchart TB
+    dev["Commit / PR to main"] --> build
+
+    subgraph build["Stage: Build & Test"]
+        b1["API: npm ci → lint → jest (coverage)"]
+        b2["Function: pip → ruff → pytest (coverage)"]
+        b3["Package api.zip + function.zip artifacts"]
+        b1 --> b3
+        b2 --> b3
+    end
+
+    build --> dep_dev
+
+    subgraph dep_dev["Stage: Deploy Dev (env: resfrac-dev)"]
+        d1["Bicep what-if"] --> d2["az deployment group create"]
+        d2 --> d3["Seed Key Vault secret"]
+        d3 --> d4["Apply SQL schema + MI grants"]
+        d4 --> d5["Zip-deploy API + Function"]
+        d5 --> d6["Smoke tests (health / ready / authz)"]
+    end
+
+    dep_dev --> gate{"Manual approval<br/>(prod environment check)"}
+    gate -->|approved| dep_prod
+
+    subgraph dep_prod["Stage: Deploy Prod (env: resfrac-prod)"]
+        p1["what-if → deploy → migrate"] --> p2["Zip-deploy API + Function"]
+        p2 --> p3["Smoke tests"]
+    end
+
+    dep_prod --> done["Live in prod"]
+
+    subgraph auth["Secretless auth"]
+        wif["Workload Identity Federation (OIDC)<br/>service connection"]
+        vg["Key Vault-backed variable groups"]
+    end
+    wif -. authenticates .-> dep_dev
+    wif -. authenticates .-> dep_prod
+    vg -. secrets .-> dep_dev
+    vg -. secrets .-> dep_prod

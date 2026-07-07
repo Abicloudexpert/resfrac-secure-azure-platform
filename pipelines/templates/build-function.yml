@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Build, lint, test and package the Python Azure Function. Publishes:
+#   * test results (JUnit) + coverage
+#   * function.zip with dependencies vendored into .python_packages
+# ---------------------------------------------------------------------------
+parameters:
+  - name: workingDir
+    type: string
+    default: apps/function
+  - name: artifactName
+    type: string
+    default: function
+  - name: pythonVersion
+    type: string
+    default: '3.11'
+
+steps:
+  - task: UsePythonVersion@0
+    displayName: 'Use Python ${{ parameters.pythonVersion }}'
+    inputs:
+      versionSpec: '${{ parameters.pythonVersion }}'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements-dev.txt
+    displayName: 'Function: install dev dependencies'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - script: ruff check .
+    displayName: 'Function: lint (ruff)'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - script: |
+      pytest --cov=shared --cov-report=xml --junitxml=$(Common.TestResultsDirectory)/function-junit.xml
+    displayName: 'Function: unit tests + coverage'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - task: PublishTestResults@2
+    displayName: 'Function: publish test results'
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '$(Common.TestResultsDirectory)/function-junit.xml'
+      testRunTitle: 'Function unit tests'
+
+  - task: PublishCodeCoverageResults@2
+    displayName: 'Function: publish coverage'
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: '${{ parameters.workingDir }}/coverage.xml'
+
+  # Vendor runtime dependencies for WEBSITE_RUN_FROM_PACKAGE deployment.
+  - script: |
+      rm -rf .python_packages
+      pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+    displayName: 'Function: vendor runtime dependencies'
+    workingDirectory: ${{ parameters.workingDir }}
+
+  - task: ArchiveFiles@2
+    displayName: 'Function: create function.zip'
+    inputs:
+      rootFolderOrFile: ${{ parameters.workingDir }}
+      includeRootFolder: false
+      archiveType: zip
+      archiveFile: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}.zip'
+      replaceExistingArchive: true
+
+  - publish: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}.zip'
+    displayName: 'Function: publish artifact'
+    artifact: ${{ parameters.artifactName }}

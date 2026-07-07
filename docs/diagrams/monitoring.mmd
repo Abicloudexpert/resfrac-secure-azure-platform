@@ -1,0 +1,27 @@
+%% Monitoring & alerting topology
+flowchart LR
+    api["Node.js API"] -->|requests, deps, exceptions| appi["Application Insights"]
+    func["Python Function"] -->|logs, custom events| appi
+    webtest["Availability web test<br/>(pings /health x5 regions)"] --> appi
+
+    api -. diagnostics .-> law["Log Analytics Workspace"]
+    func -. diagnostics .-> law
+    kv["Key Vault"] -. audit .-> law
+    sql["Azure SQL"] -. audit/metrics .-> law
+    stg["Storage"] -. metrics .-> law
+    plan["App Service Plan"] -. metrics .-> law
+    appi --> law
+
+    subgraph alerts["Azure Monitor Alerts"]
+        av["Availability alert<br/>(failedLocationCount ≥ 2)"]
+        af["App failure alert<br/>(failed requests > 5 / 5m)"]
+        inf["Infra alert<br/>(plan CPU > 80% / 15m)"]
+    end
+
+    webtest --> av
+    appi --> af
+    plan --> inf
+
+    av --> ag["Action Group → email / on-call"]
+    af --> ag
+    inf --> ag
