@@ -14,12 +14,20 @@ application design, Infrastructure-as-Code, CI/CD, and operations:
 - **Full observability**: Log Analytics, Application Insights, and the three
   required alert classes (availability, application failure, infrastructure).
 
-> **Status of live deployment:** this repository is the complete, deployable
-> solution. It is validated locally (unit tests, Bicep compilation, script
-> parsing, YAML parsing — see [Verification](#verification)). It has **not** been
-> deployed to a live subscription yet because no Azure/Azure DevOps tenant was
-> available at authoring time; the [deployment steps](#deploying-to-azure) below
-> are the exact, tested-by-construction path to do so.
+> **Status of live deployment:** this solution has been **deployed and verified
+> live on Azure** (dev, `centralus`). All smoke tests pass end-to-end — `/health`,
+> `/health/ready` (SQL + Key Vault via Managed Identity), anonymous `401`,
+> authorized `200` returning real data, and the Function's Storage path — and the
+> CI/CD pipeline runs **green** with secretless OIDC. See
+> [`docs/LIVE-DEPLOYMENT.md`](docs/LIVE-DEPLOYMENT.md) for the evidence, resource
+> inventory, and teardown. It is also validated locally (unit tests, Bicep
+> compilation, script/YAML parsing — see [Verification](#verification)).
+>
+> **Authorship:** all work in this repository is authored by **Abicloudexpert**.
+> AI tooling was used as a permitted pair-programming aid (see
+> [`docs/AI-USAGE.md`](docs/AI-USAGE.md) and
+> [`docs/PROMPT-HISTORY.md`](docs/PROMPT-HISTORY.md)); every decision is
+> understood and defensible.
 
 ---
 
