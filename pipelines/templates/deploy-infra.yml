@@ -97,6 +97,7 @@ steps:
         echo "##vso[task.setvariable variable=keyVaultName]$(get_out keyVaultName)"
         echo "##vso[task.setvariable variable=sqlFqdn]$(get_out sqlServerFqdn)"
         echo "##vso[task.setvariable variable=sqlDb]$(get_out sqlDatabaseName)"
+        echo "##vso[task.setvariable variable=apiPrincipalId]$(get_out apiPrincipalId)"
 
   - task: AzureCLI@2
     displayName: 'Infra: seed Key Vault secret (out-of-band)'
@@ -123,7 +124,7 @@ steps:
             # (which must be a SQL Entra admin / member of the admin group).
             pushd infra/sql
             npm install --no-save --silent mssql @azure/identity
-            sed "s/{{API_APP_NAME}}/$(apiName)/g; s/{{FUNCTION_APP_NAME}}/$(functionName)/g" \
+            sed "s/{{API_APP_NAME}}/$(apiName)/g; s/{{FUNCTION_APP_NAME}}/$(functionName)/g; s/{{API_MI_OBJECT_ID}}/$(apiPrincipalId)/g" \
               grant-managed-identities.sql.tmpl > /tmp/grant.sql
             node run-sql.cjs --server "$(sqlFqdn)" --database "$(sqlDb)" --file schema.sql
             node run-sql.cjs --server "$(sqlFqdn)" --database "$(sqlDb)" --file /tmp/grant.sql

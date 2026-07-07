@@ -3,8 +3,14 @@
 -- access to the database as contained Entra users. There are NO passwords.
 --
 -- This is a TEMPLATE: {{API_APP_NAME}} / {{FUNCTION_APP_NAME}} are substituted
--- by provision.ps1 with the actual App Service / Function App names (which are
--- the display names of their system-assigned managed identities).
+-- with the actual App Service / Function App names, and {{API_MI_OBJECT_ID}}
+-- with the API managed identity's object (principal) id.
+--
+-- `WITH OBJECT_ID` is used deliberately: it lets Azure SQL create the contained
+-- user WITHOUT resolving the identity through Microsoft Graph, so the SQL
+-- server's identity does NOT need the "Directory Readers" Entra role. This makes
+-- the migration self-contained and reliable from CI (where the connected admin
+-- is a service principal without directory-read permissions).
 --
 -- Run as an Entra admin connected to the TARGET database (not master).
 -- Idempotent: guarded with existence checks.
@@ -13,7 +19,7 @@
 -- ---- API identity: read + write on application tables ----
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'{{API_APP_NAME}}')
 BEGIN
-    CREATE USER [{{API_APP_NAME}}] FROM EXTERNAL PROVIDER;
+    CREATE USER [{{API_APP_NAME}}] FROM EXTERNAL PROVIDER WITH OBJECT_ID = '{{API_MI_OBJECT_ID}}';
 END;
 GO
 ALTER ROLE db_datareader ADD MEMBER [{{API_APP_NAME}}];
