@@ -63,6 +63,10 @@ resource api 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'APP_VERSION', value: '#{Build.BuildNumber}#' }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
+        // A fresh Linux app's first container pull+mount can exceed the default
+        // 230s probe window; allow more headroom so cold starts aren't flagged
+        // as start failures during CI deploys.
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
         { name: 'ApplicationInsightsAgent_EXTENSION_VERSION', value: '~3' }
         { name: 'AZURE_TENANT_ID', value: tenantId }

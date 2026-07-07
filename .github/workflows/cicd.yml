@@ -197,7 +197,10 @@ jobs:
         with:
           inlineScript: |
             set -euo pipefail
-            az webapp deploy -g "$RG" -n "$API_NAME" --src-path api.zip --type zip
+            # --track-status false: return once OneDeploy accepts the package
+            # rather than blocking on the (slow) first cold-container start. The
+            # smoke-test stage verifies the app is actually serving, with retries.
+            az webapp deploy -g "$RG" -n "$API_NAME" --src-path api.zip --type zip --track-status false
 
       - name: Deploy — Function (zip, run-from-package)
         uses: azure/cli@v2

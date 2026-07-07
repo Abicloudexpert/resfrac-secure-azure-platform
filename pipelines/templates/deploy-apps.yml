@@ -34,7 +34,7 @@ steps:
         set -euo pipefail
         az webapp deploy -g "${{ parameters.resourceGroup }}" -n "$(apiName)" \
           --src-path "$(Pipeline.Workspace)/${{ parameters.apiArtifact }}/${{ parameters.apiArtifact }}.zip" \
-          --type zip
+          --type zip --track-status false
 
   - task: AzureCLI@2
     displayName: 'Deploy Function (zip)'
