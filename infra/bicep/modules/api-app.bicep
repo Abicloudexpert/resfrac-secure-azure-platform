@@ -47,6 +47,9 @@ resource api 'Microsoft.Web/sites@2023-12-01' = {
     vnetRouteAllEnabled: enablePrivateNetworking ? true : false
     siteConfig: {
       linuxFxVersion: linuxFxVersion
+      // Explicit startup so the run-from-package deploy is deterministic across
+      // platforms (does not rely on the image's default Node detection).
+      appCommandLine: 'node src/server.js'
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       http20Enabled: true

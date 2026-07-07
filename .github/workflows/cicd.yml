@@ -1,0 +1,219 @@
+# ===========================================================================
+# ResFrac — CI/CD (GitHub Actions, live)
+#
+#   build  ->  deploy-dev (GitHub Environment: dev)
+#
+# This is a *live-runnable mirror* of the Azure DevOps pipeline in
+# `pipelines/azure-pipelines.yml` (which remains the required deliverable).
+# It runs the SAME Bicep + PowerShell + Node SQL runner, and authenticates to
+# Azure with **Workload Identity Federation (OIDC) — no stored secrets**.
+# See docs/adr/0007-github-actions-alongside-azure-devops.md for the rationale.
+#
+# Config (GitHub repo Settings -> Secrets and variables -> Actions):
+#   Secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#              SMOKE_CLIENT_SECRET
+#   Variables: AZURE_RESOURCE_GROUP, AZURE_LOCATION, API_CLIENT_ID,
+#              SQL_ADMIN_OBJECT_ID, SQL_ADMIN_LOGIN, SMOKE_CLIENT_ID,
+#              API_AUDIENCE, ALERT_EMAIL
+# ===========================================================================
+name: CI/CD (live)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/**
+      - infra/**
+      - pipelines/**
+      - .github/workflows/**
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC federation to Azure
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # -------------------------------------------------------------------------
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Node.js API ----
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: API — install
+        working-directory: apps/api
+        run: npm ci
+      - name: API — lint
+        working-directory: apps/api
+        run: npm run lint
+      - name: API — unit tests + coverage
+        working-directory: apps/api
+        run: npm run test:ci
+      - name: API — package production runtime
+        working-directory: apps/api
+        run: |
+          npm ci --omit=dev
+          zip -rq "$GITHUB_WORKSPACE/api.zip" src node_modules package.json package-lock.json
+
+      # ---- Python Function ----
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Function — dev deps, lint, tests
+        working-directory: apps/function
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          ruff check .
+          pytest --cov=shared --cov-report=xml
+      - name: Function — vendor runtime deps + package
+        working-directory: apps/function
+        run: |
+          rm -rf .python_packages
+          pip install --target=".python_packages/lib/site-packages" -r requirements.txt
+          zip -rq "$GITHUB_WORKSPACE/function.zip" \
+            function_app.py host.json requirements.txt shared .python_packages \
+            -x '*/__pycache__/*'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apps
+          path: |
+            api.zip
+            function.zip
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy • Dev
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: apps
+
+      - name: Azure login (OIDC, secretless)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Infra — what-if (preview)
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az group create -n "$RG" -l "$LOCATION" \
+              --tags workload=resfrac environment=dev >/dev/null
+            az deployment group what-if -g "$RG" \
+              -f infra/bicep/main.bicep \
+              -p infra/bicep/params/dev.bicepparam \
+              -p location="$LOCATION" \
+              -p apiClientId=${{ vars.API_CLIENT_ID }} \
+              -p sqlAdminObjectId=${{ vars.SQL_ADMIN_OBJECT_ID }} \
+              -p sqlAdminLogin='${{ vars.SQL_ADMIN_LOGIN }}' \
+              -p sqlAdminPrincipalType=Group \
+              -p alertEmail='${{ vars.ALERT_EMAIL }}' || true
+
+      - name: Infra — deploy Bicep stack
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            DEP="resfrac-dev-${{ github.run_id }}"
+            az deployment group create -g "$RG" -n "$DEP" \
+              -f infra/bicep/main.bicep \
+              -p infra/bicep/params/dev.bicepparam \
+              -p location="$LOCATION" \
+              -p apiClientId=${{ vars.API_CLIENT_ID }} \
+              -p sqlAdminObjectId=${{ vars.SQL_ADMIN_OBJECT_ID }} \
+              -p sqlAdminLogin='${{ vars.SQL_ADMIN_LOGIN }}' \
+              -p sqlAdminPrincipalType=Group \
+              -p alertEmail='${{ vars.ALERT_EMAIL }}'
+            get_out () { az deployment group show -g "$RG" -n "$DEP" --query "properties.outputs.$1.value" -o tsv; }
+            {
+              echo "API_NAME=$(get_out apiName)"
+              echo "FUNC_NAME=$(get_out functionAppName)"
+              echo "API_URL=$(get_out apiUrl)"
+              echo "FUNC_URL=$(get_out functionUrl)"
+              echo "KV_NAME=$(get_out keyVaultName)"
+              echo "SQL_FQDN=$(get_out sqlServerFqdn)"
+              echo "SQL_DB=$(get_out sqlDatabaseName)"
+            } >> "$GITHUB_ENV"
+
+      - name: Infra — seed Key Vault secret
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az keyvault secret set --vault-name "$KV_NAME" \
+              --name api-feature-flag --value enabled >/dev/null
+            echo "Secret 'api-feature-flag' set in $KV_NAME"
+
+      - name: Infra — apply SQL schema + MI grants (passwordless)
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            SERVER="${SQL_FQDN%%.*}"
+            RULE="gha-runner-${{ github.run_id }}"
+            MYIP="$(curl -fsS https://api.ipify.org)"
+            # Temporarily allow this runner's egress IP, then always remove it.
+            cleanup () { az sql server firewall-rule delete -g "$RG" -s "$SERVER" -n "$RULE" -o none 2>/dev/null || true; }
+            trap cleanup EXIT
+            az sql server firewall-rule create -g "$RG" -s "$SERVER" -n "$RULE" \
+              --start-ip-address "$MYIP" --end-ip-address "$MYIP" -o none
+            pushd infra/sql
+            npm install --no-save --silent mssql @azure/identity
+            sed "s/{{API_APP_NAME}}/$API_NAME/g; s/{{FUNCTION_APP_NAME}}/$FUNC_NAME/g" \
+              grant-managed-identities.sql.tmpl > /tmp/grant.sql
+            node run-sql.cjs --server "$SQL_FQDN" --database "$SQL_DB" --file schema.sql
+            node run-sql.cjs --server "$SQL_FQDN" --database "$SQL_DB" --file /tmp/grant.sql
+            popd
+
+      - name: Deploy — API (zip, run-from-package)
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az webapp deploy -g "$RG" -n "$API_NAME" --src-path api.zip --type zip
+
+      - name: Deploy — Function (zip, run-from-package)
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            az functionapp config appsettings set -g "$RG" -n "$FUNC_NAME" \
+              --settings WEBSITE_RUN_FROM_PACKAGE=1 >/dev/null
+            az functionapp deployment source config-zip -g "$RG" -n "$FUNC_NAME" --src function.zip
+
+      - name: Smoke tests (health, readiness, authz)
+        shell: pwsh
+        env:
+          SMOKE_CLIENT_SECRET: ${{ secrets.SMOKE_CLIENT_SECRET }}
+        run: |
+          ./infra/scripts/smoke-test.ps1 `
+            -ApiUrl "$env:API_URL" `
+            -FunctionUrl "$env:FUNC_URL" `
+            -TenantId "${{ secrets.AZURE_TENANT_ID }}" `
+            -ClientId "${{ vars.SMOKE_CLIENT_ID }}" `
+            -ApiAudience "${{ vars.API_AUDIENCE }}"
