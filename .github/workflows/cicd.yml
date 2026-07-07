@@ -169,10 +169,11 @@ jobs:
               --name api-feature-flag --value enabled >/dev/null
             echo "Secret 'api-feature-flag' set in $KV_NAME"
 
+      # Runs on the host (not the azure-cli container) because it needs Node in
+      # addition to az; az is already authenticated by the azure/login step.
       - name: Infra — apply SQL schema + MI grants (passwordless)
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
+        shell: bash
+        run: |
             set -euo pipefail
             SERVER="${SQL_FQDN%%.*}"
             RULE="gha-runner-${{ github.run_id }}"
